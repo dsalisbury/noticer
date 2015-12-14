@@ -57,12 +57,14 @@ def runner(tasks, command):
         _, task = tasks.get()
         if task is STOP or task is RELOAD:
             print('Stopping')
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(5)
+            # No point signalling a stopped process
+            if not proc.poll():
+                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(5)
 
             if task is STOP:
                 break
