@@ -27,10 +27,13 @@ import queue
 import threading
 import signal
 import argparse
+from functools import partial
 
 # Sentinels to signal that we need to restart the process or abort altogether
 RELOAD = object()
 STOP = object()
+
+log_err = partial(print, file=sys.stderr)
 
 
 class EventHandler(pyinotify.ProcessEvent):
@@ -50,13 +53,13 @@ class EventHandler(pyinotify.ProcessEvent):
     process_IN_CREATE = generic_processor
 
 
-def runner(tasks, command):
+def runner(tasks, command, log=log_err):
     while True:
-        print('Starting')
+        log('Starting')
         proc = subprocess.Popen(command)
         _, task = tasks.get()
         if task is STOP or task is RELOAD:
-            print('Stopping')
+            log('Stopping')
             # No point signalling a stopped process
             if not proc.poll():
                 proc.send_signal(signal.SIGINT)
@@ -69,10 +72,10 @@ def runner(tasks, command):
             if task is STOP:
                 break
         else:
-            print('Bogus task: {!r}'.format(task))
+            log('Bogus task: {!r}'.format(task))
 
 
-def watcher(directory, extensions, command):
+def watcher(directory, extensions, command, log=log_err):
     task_queue = queue.PriorityQueue()
     run_thread = threading.Thread(
         target=runner, kwargs={'tasks': task_queue, 'command': command})
@@ -88,10 +91,10 @@ def watcher(directory, extensions, command):
     try:
         notifier.loop()
     except KeyboardInterrupt:
-        print('Stopping normally')
+        log('Stopping normally')
     finally:
         task_queue.put((0, STOP))
-    print('Waiting on runner to stop')
+    log('Waiting on runner to stop')
     run_thread.join()
 
 
