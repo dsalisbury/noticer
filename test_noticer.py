@@ -41,39 +41,19 @@ def make_popen_mock(returncode=0):
     return mock
 
 
+def make_event(is_set=False):
+    event = threading.Event()
+    if is_set:
+        event.set()
+    return event
+
+
 @patch('noticer.time.sleep')
 @patch('noticer.subprocess.Popen', new_callable=make_popen_mock)
 class TaskLoopTests(unittest.TestCase):
-    def test_execution(self, popen, sleep):
-        test_cmd = 'run_my_thing.sh'
-        task_loop(enqueue(STOP), test_cmd)
-        popen.assert_called_with(test_cmd)
-
     def test_reload(self, popen, sleep):
         task_loop(enqueue(RELOAD, RELOAD, RELOAD, STOP), 'gogo')
         self.assertEqual(popen.call_count, 4)
-
-    def test_short_running_doesnt_get_signal(self, popen, sleep):
-        proc = popen.return_value
-        proc.poll.return_value = 0
-        task_loop(enqueue(RELOAD, STOP), 'gogo')
-        popen.return_value.send_signal.assert_not_called()
-
-    def test_long_running_but_quick_stopping(self, popen, sleep):
-        proc = popen.return_value
-        proc.poll.return_value = None
-        proc.wait.return_value = 0
-        task_loop(enqueue(STOP), 'gogo')
-        proc.send_signal.assert_called_with(signal.SIGINT)
-        self.assertEqual(popen.return_value.send_signal.call_count, 1)
-
-    def test_long_running_slow_stopping(self, popen, sleep):
-        proc = popen.return_value
-        proc.poll.return_value = None
-        proc.wait.side_effect = [
-            subprocess.TimeoutExpired('gogo', 2), lambda *_: True]
-        task_loop(enqueue(STOP), 'gogo')
-        self.assertTrue(proc.kill.called)
 
     def test_not_crash_when_popen_fails(self, popen, sleep):
         proc = popen.return_value
@@ -92,7 +72,7 @@ class TaskLoopTests(unittest.TestCase):
 @patch('noticer.time.sleep')
 @patch('noticer.subprocess.Popen', new_callable=make_popen_mock)
 class RunnerTests(unittest.TestCase):
-    def _thing(self, popen, returncode):
+    def _short_cmd(self, popen, returncode):
         proc = popen.return_value
         proc.poll.return_value = True  # command completed
         proc.returncode = returncode
@@ -102,11 +82,14 @@ class RunnerTests(unittest.TestCase):
         return lines
 
     def test_failing_short_command(self, popen, sleep):
-        out = self._thing(popen=popen, returncode=1)
+        out = self._short_cmd(popen=popen, returncode=1)
+        popen.return_value.send_signal.assert_not_called()
         self.assertEqual(out[-1], RED + 'COMMAND FAILED' + RESET)
 
     def test_successful_short_command(self, popen, sleep):
-        out = self._thing(popen=popen, returncode=0)
+        out = self._short_cmd(popen=popen, returncode=0)
+        popen.assert_called_with('gogo')
+        popen.return_value.send_signal.assert_not_called()
         self.assertEqual(out[-1], GREEN + 'COMMAND SUCCEEDED' + RESET)
 
     def test_long_command_no_status_output(self, popen, sleep):
@@ -116,7 +99,21 @@ class RunnerTests(unittest.TestCase):
         proc.wait.side_effect = [
             subprocess.TimeoutExpired('gogo', 2), lambda *_: True]
         log_mock = MagicMock()
-        stop = threading.Event()
-        stop.set()
-        runner('gogo', stop_event=stop, log=log_mock)
-        self.assertEqual(log_mock.call_count, 4)
+        runner('gogo', stop_event=make_event(is_set=True), log=log_mock)
+        self.assertEqual(log_mock.call_count, 4)  # calls to add in spacing
+
+    def test_long_running_but_quick_stopping(self, popen, sleep):
+        proc = popen.return_value
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        runner('gogo', stop_event=make_event(is_set=True))
+        proc.send_signal.assert_called_with(signal.SIGINT)
+        self.assertEqual(popen.return_value.send_signal.call_count, 1)
+
+    def test_long_running_slow_stopping(self, popen, sleep):
+        proc = popen.return_value
+        proc.poll.return_value = None
+        proc.wait.side_effect = [
+            subprocess.TimeoutExpired('gogo', 2), lambda *_: True]
+        runner('gogo', stop_event=make_event(is_set=True))
+        self.assertTrue(proc.kill.called)
