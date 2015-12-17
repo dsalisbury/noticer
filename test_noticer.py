@@ -25,7 +25,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from noticer import task_loop, runner, STOP, RELOAD
+from noticer import task_loop, runner, STOP, RELOAD, RED, GREEN, RESET
 
 
 def enqueue(*things):
@@ -103,11 +103,11 @@ class RunnerTests(unittest.TestCase):
 
     def test_failing_short_command(self, popen, sleep):
         out = self._thing(popen=popen, returncode=1)
-        self.assertEqual(out[-1], 'FAILURE')
+        self.assertEqual(out[-1], RED + 'COMMAND FAILED' + RESET)
 
     def test_successful_short_command(self, popen, sleep):
         out = self._thing(popen=popen, returncode=0)
-        self.assertEqual(out[-1], 'SUCCESS')
+        self.assertEqual(out[-1], GREEN + 'COMMAND SUCCEEDED' + RESET)
 
     def test_long_command_no_status_output(self, popen, sleep):
         proc = popen.return_value
@@ -119,4 +119,4 @@ class RunnerTests(unittest.TestCase):
         stop = threading.Event()
         stop.set()
         runner('gogo', stop_event=stop, log=log_mock)
-        self.assertFalse(log_mock.called)
+        self.assertEqual(log_mock.call_count, 4)

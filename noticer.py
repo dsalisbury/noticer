@@ -36,6 +36,10 @@ STOP = object()
 
 log_err = partial(print, file=sys.stderr)
 
+RESET = '\x1b[0m'
+RED = '\x1b[31;1m'
+GREEN = '\x1b[32;1m'
+
 
 class EventHandler(pyinotify.ProcessEvent):
     def my_init(self, directory, extensions, task_queue):
@@ -55,12 +59,18 @@ class EventHandler(pyinotify.ProcessEvent):
 
 
 def runner(command, stop_event, log=log_err):
+    log('- * ' * 10 + '-')
+    log('\n' * 4)
     try:
         proc = subprocess.Popen(command)
-        while not stop_event.is_set():
+        run = True
+        while run:
             if proc.poll() is not None:
                 break
-            time.sleep(0.5)
+            if stop_event.is_set():
+                run = False
+            else:
+                time.sleep(0.5)
         else:
             # proc hadn't finished but we were told to stop
             proc.send_signal(signal.SIGINT)
@@ -72,11 +82,11 @@ def runner(command, stop_event, log=log_err):
             # return early as we shouldn't log status when we killed the proc
             # log('exit early')
             return
-
+        log('\n' * 2)
         if proc.returncode == 0:
-            log('SUCCESS')
+            log(GREEN + 'COMMAND SUCCEEDED' + RESET)
         else:
-            log('FAILURE')
+            log(RED + 'COMMAND FAILED' + RESET)
     except Exception as e:
         log('Caught exception while running {!r}: {!r}'.format(command, e))
 
