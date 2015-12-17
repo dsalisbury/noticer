@@ -28,6 +28,7 @@ import threading
 import signal
 import argparse
 from functools import partial
+import time
 
 # Sentinels to signal that we need to restart the process or abort altogether
 RELOAD = object()
@@ -53,22 +54,51 @@ class EventHandler(pyinotify.ProcessEvent):
     process_IN_CREATE = generic_processor
 
 
-def runner(tasks, command, log=log_err):
-    while True:
-        log('Starting')
+def runner(command, stop_event, log=log_err):
+    try:
         proc = subprocess.Popen(command)
+        while not stop_event.is_set():
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+        else:
+            # proc hadn't finished but we were told to stop
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(5)
+            # return early as we shouldn't log status when we killed the proc
+            # log('exit early')
+            return
+
+        if proc.returncode == 0:
+            log('SUCCESS')
+        else:
+            log('FAILURE')
+    except Exception as e:
+        log('Caught exception while running {!r}: {!r}'.format(command, e))
+
+
+def task_loop(tasks, command, log=log_err):
+    def run_thread_factory(stop_event):
+        return threading.Thread(target=runner, kwargs={
+            'command': command, 'stop_event': stop_event, 'log': log})
+
+    stop_event = None
+    run_thread = None
+    while True:
+        if run_thread is None:
+            stop_event = threading.Event()
+            run_thread = run_thread_factory(stop_event)
+            run_thread.start()
+
         _, task = tasks.get()
         if task is STOP or task is RELOAD:
-            log('Stopping')
-            # No point signalling a stopped process
-            if not proc.poll():
-                proc.send_signal(signal.SIGINT)
-                try:
-                    proc.wait(5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(5)
-
+            stop_event.set()
+            run_thread.join()
+            run_thread = None
             if task is STOP:
                 break
         else:
@@ -78,10 +108,10 @@ def runner(tasks, command, log=log_err):
 def watcher(directory, extensions, command, log=log_err):
     task_queue = queue.PriorityQueue()
     run_thread = threading.Thread(
-        target=runner, kwargs={'tasks': task_queue, 'command': command})
+        target=task_loop, kwargs={'tasks': task_queue, 'command': command})
     run_thread.start()
 
-    # Plumbing between inotify and worker thread's task queue
+    # Plumbing between inotify and event loop's task queue
     handler = EventHandler(
         directory=directory, extensions=extensions, task_queue=task_queue)
 
@@ -94,7 +124,7 @@ def watcher(directory, extensions, command, log=log_err):
         log('Stopping normally')
     finally:
         task_queue.put((0, STOP))
-    log('Waiting on runner to stop')
+    log('Waiting on task_loop to stop')
     run_thread.join()
 
 
