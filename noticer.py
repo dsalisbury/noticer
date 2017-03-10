@@ -56,6 +56,8 @@ class EventHandler(pyinotify.ProcessEvent):
 
     process_IN_MODIFY = generic_processor
     process_IN_CREATE = generic_processor
+    process_IN_MOVED_FROM = generic_processor
+    process_IN_MOVED_TO = generic_processor
 
 
 def runner(command, stop_event, log=log_err):
